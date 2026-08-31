@@ -13,7 +13,7 @@ import java.time.Duration;
 
 public class Main {
 
-    private static final String DEFAULT_PROMPT = "Расскажи анекдот про вайбкодера";
+    private static final String DEFAULT_PROMPT = "Почему хлеб назвали хлебом";
 
     public static void main(String[] args) {
         String prompt = args.length > 0
@@ -64,7 +64,7 @@ public class Main {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(apiUrl))
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofMinutes(5))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + apiKey)
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
@@ -82,16 +82,18 @@ public class Main {
                     "HTTP " + response.statusCode() + ": " + response.body());
         }
 
-        JsonNode content = mapper.readTree(response.body())
-                .path("choices")
-                .path(0)
-                .path("message")
-                .path("content");
+        JsonNode body = mapper.readTree(response.body());
+        JsonNode responseMessage = body.path("choices").path(0).path("message");
 
-        if (content.isMissingNode() || content.asText().isBlank()) {
+        String content = responseMessage.path("content").asText("");
+        if (content.isBlank()) {
+            content = responseMessage.path("reasoning_content").asText("");
+        }
+
+        if (content.isBlank()) {
             throw new IllegalStateException(
                     "В ответе нет choices[0].message.content: " + response.body());
         }
-        return content.asText();
+        return content;
     }
 }
