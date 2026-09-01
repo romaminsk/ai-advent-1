@@ -22,7 +22,9 @@ import java.nio.charset.StandardCharsets;
 
 public class Day2 {
 
-    private static final String STOP_SEQUENCE = "[КОНЕЦ]";
+    private static final String STOP_SEQUENCE = "\nИтог:";
+    private static final int LIMITED_MAX_TOKENS = 120;
+    private static final int STOP_MAX_TOKENS = 500;
     private static final int JSON_ATTEMPTS = 3;
 
     private static final List<String> VALID_MODES =
@@ -53,6 +55,9 @@ public class Day2 {
     }
 
     private record Arguments(String mode, String prompt) {
+    }
+
+    private record Answer(String text, boolean fromReasoning, String finishReason) {
     }
 
     public static void main(String[] args) {
@@ -194,8 +199,13 @@ public class Day2 {
 
     private static void runFree(Config config, String prompt) throws IOException, InterruptedException {
         System.out.println("=== РЕЖИМ FREE: БЕЗ ОГРАНИЧЕНИЙ ===");
-        String answer = sendChatRequest(config, prompt, null, null, null, "Ждём ответ модели");
-        System.out.println(answer);
+        Answer answer = sendChatRequest(config, prompt, null, null, null, null, "Ждём ответ модели");
+        System.out.println(answer.text());
+        if (answer.fromReasoning()) {
+            System.out.println();
+            System.out.println("(Внимание: поле content пусто — показаны размышления модели "
+                    + "(reasoning_content), финальный ответ не сформирован.)");
+        }
     }
 
     private static void runJson(Config config, String prompt) throws IOException, InterruptedException {
@@ -205,10 +215,22 @@ public class Day2 {
         for (int attempt = 1; attempt <= JSON_ATTEMPTS; attempt++) {
             System.out.println("--- JSON-ответ " + attempt + " ---");
             try {
-                String content = sendChatRequest(config, jsonPrompt, null, null, 0.0,
+                Answer answer = sendChatRequest(config, jsonPrompt, null, null, null, 0.0,
                         "Запрос " + attempt + "/" + JSON_ATTEMPTS);
-                JsonNode root = MAPPER.readTree(content);
-                String error = validateJsonStructure(root);
+                String content = answer.text();
+                JsonNode root = null;
+                String error;
+                if (answer.fromReasoning()) {
+                    error = "content пуст — модель вернула только размышления (reasoning_content), "
+                            + "финальный JSON не сформирован";
+                } else {
+                    try {
+                        root = MAPPER.readTree(content);
+                        error = validateJsonStructure(root);
+                    } catch (JsonProcessingException e) {
+                        error = "Ответ не является валидным JSON: " + e.getMessage();
+                    }
+                }
                 if (error != null) {
                     System.out.println("Ошибка проверки структуры: " + error);
                     System.out.println("Ответ модели:");
@@ -236,36 +258,88 @@ public class Day2 {
                 + "- каждый пункт должен состоять из одного предложения;\n"
                 + "- не добавляй вступление и заключение.";
 
-        String answer = sendChatRequest(config, limitedPrompt, 120, null, null, "Ждём ответ модели");
-        System.out.println(answer);
-        System.out.println("Количество слов: " + countWords(answer));
+        Answer answer = sendChatRequest(config, limitedPrompt, null, LIMITED_MAX_TOKENS, null, null,
+                "Ждём ответ модели");
+        System.out.println(answer.text());
+        if (answer.fromReasoning()) {
+            System.out.println();
+            System.out.println("(Финальный ответ не сформирован: " + explainMissingContent(answer.finishReason())
+                    + ". Показан текст размышлений (reasoning_content).)");
+        }
+        System.out.println("Количество слов: " + countWords(answer.text()));
     }
 
     private static void runStop(Config config, String prompt) throws IOException, InterruptedException {
         System.out.println("=== РЕЖИМ STOP: ОСТАНОВКА ПО ПОСЛЕДОВАТЕЛЬНОСТИ ===");
-        String stopPrompt = prompt + "\n\nОтветь строго в формате:\n"
+        System.out.println("(stop-последовательность: \"\\nИтог:\" — обрывает ответ перед третьей строкой)");
+        System.out.println();
+        String stopSystemPrompt = "Ты — краткий ассистент. Отвечай на русском языке.\n"
+                + "Формат ответа — ровно три строки:\n"
                 + "Ответ: <краткий ответ по существу запроса>\n"
                 + "Детали: <краткие пояснения>\n"
                 + "Итог: <краткий вывод>\n"
-                + STOP_SEQUENCE;
+                + "После строки Итог ничего не пиши.";
 
-        String answer = sendChatRequest(config, stopPrompt, 200, List.of(STOP_SEQUENCE), null,
-                "Ждём ответ модели");
-        System.out.println(answer);
-        if (!answer.contains(STOP_SEQUENCE)) {
+        System.out.println("Запрос 1/2: с stop-последовательностью");
+        System.out.println();
+        Answer withStop = sendChatRequest(config, prompt, stopSystemPrompt, STOP_MAX_TOKENS,
+                List.of(STOP_SEQUENCE), null, "Запрос с stop");
+        String formatted = extractFormattedAnswer(withStop.text());
+        if (formatted != null) {
+            System.out.println(formatted);
             System.out.println();
-            System.out.println("(Последовательность " + STOP_SEQUENCE + " не включена в ответ — "
-                    + "API обычно не возвращает сработавшую stop sequence в content. Это не ошибка.)");
+            System.out.println("(Генерация остановлена по stop-последовательности \"\\nИтог:\" — "
+                    + "модель собиралась вывести третью строку, и API обрезал ответ. "
+                    + "Сама сработавшая последовательность в content не включается — это нормально.)");
+            return;
         }
+
+        System.out.println(shorten(withStop.text()));
+        System.out.println();
+        System.out.println("(stop сработала до начала ответа: у reasoning-моделей stop-последовательность "
+                + "применяется ко всему потоку генерации, включая размышления.)");
+        System.out.println();
+        System.out.println("Запрос 2/2: повтор без stop — чтобы получить сам ответ");
+        System.out.println();
+        Answer withoutStop = sendChatRequest(config, prompt, stopSystemPrompt, STOP_MAX_TOKENS, null, null,
+                "Повтор без stop");
+        String retryFormatted = extractFormattedAnswer(withoutStop.text());
+        System.out.println(retryFormatted != null ? retryFormatted : withoutStop.text());
+        System.out.println();
+        System.out.println("(Вывод: с reasoning-моделями stop-последовательность ненадёжна — "
+                + "она может сработать внутри размышлений раньше, чем в самом ответе.)");
     }
 
-    private static String sendChatRequest(Config config,
+    private static String extractFormattedAnswer(String text) {
+        if (text == null) {
+            return null;
+        }
+        String trimmed = text.trim();
+        if (trimmed.startsWith("Ответ:")) {
+            return trimmed;
+        }
+        int index = trimmed.indexOf("\nОтвет:");
+        if (index >= 0) {
+            return trimmed.substring(index + 1).trim();
+        }
+        return null;
+    }
+
+    private static String shorten(String text) {
+        if (text.length() <= 300) {
+            return text;
+        }
+        return text.substring(0, 300) + "\n…(диагностический текст обрезан)";
+    }
+
+    private static Answer sendChatRequest(Config config,
                                           String prompt,
+                                          String systemPrompt,
                                           Integer maxTokens,
                                           List<String> stopSequences,
                                           Double temperature,
                                           String loaderLabel) throws IOException, InterruptedException {
-        String requestBody = buildRequestBody(config.model(), prompt, maxTokens, stopSequences, temperature);
+        String requestBody = buildRequestBody(config.model(), prompt, systemPrompt, maxTokens, stopSequences, temperature);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(config.apiUrl()))
@@ -293,11 +367,12 @@ public class Day2 {
         }
 
         JsonNode body = MAPPER.readTree(response.body());
-        return extractAnswer(body, response.body());
+        return buildAnswer(body, response.body());
     }
 
     private static String buildRequestBody(String model,
                                            String prompt,
+                                           String systemPrompt,
                                            Integer maxTokens,
                                            List<String> stopSequences,
                                            Double temperature) throws JsonProcessingException {
@@ -305,6 +380,11 @@ public class Day2 {
         root.put("model", model);
 
         ArrayNode messages = root.putArray("messages");
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            ObjectNode systemMessage = messages.addObject();
+            systemMessage.put("role", "system");
+            systemMessage.put("content", systemPrompt);
+        }
         ObjectNode message = messages.addObject();
         message.put("role", "user");
         message.put("content", prompt);
@@ -325,20 +405,37 @@ public class Day2 {
         return MAPPER.writeValueAsString(root);
     }
 
-    private static String extractAnswer(JsonNode body, String rawBody) {
-        JsonNode message = body.path("choices").path(0).path("message");
+    private static Answer buildAnswer(JsonNode body, String rawBody) {
+        JsonNode choice = body.path("choices").path(0);
+        String finishReason = choice.path("finish_reason").asText("");
+        JsonNode message = choice.path("message");
 
         String content = message.path("content").asText("");
-        if (content.isBlank()) {
-            content = message.path("reasoning_content").asText("");
+        if (!content.isBlank()) {
+            return new Answer(content, false, finishReason);
         }
 
-        if (content.isBlank()) {
-            throw new IllegalStateException(
-                    "В ответе нет choices[0].message.content и choices[0].message.reasoning_content: "
-                            + rawBody);
+        String reasoning = message.path("reasoning_content").asText("");
+        if (!reasoning.isBlank()) {
+            return new Answer(reasoning, true, finishReason);
         }
-        return content;
+
+        throw new IllegalStateException(
+                "В ответе нет choices[0].message.content и choices[0].message.reasoning_content: "
+                        + rawBody);
+    }
+
+    private static String explainMissingContent(String finishReason) {
+        if ("length".equalsIgnoreCase(finishReason)) {
+            return "лимит max_tokens израсходован размышлениями модели до начала финального ответа";
+        }
+        if ("stop".equalsIgnoreCase(finishReason)) {
+            return "stop-последовательность сработала внутри размышлений модели, до финального ответа дело не дошло";
+        }
+        if (finishReason == null || finishReason.isBlank()) {
+            return "модель завершила генерацию без формирования финального ответа";
+        }
+        return "модель завершила генерацию без финального ответа (finish_reason=" + finishReason + ")";
     }
 
     private static String validateJsonStructure(JsonNode root) {
