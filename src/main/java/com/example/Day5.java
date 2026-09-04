@@ -26,16 +26,38 @@ public class Day5 {
     // Метки силы моделей (индексы совпадают с MODELS).
     private static final String[] MODEL_LABELS = {"слабая", "средняя", "сильная"};
 
-    // Цены за 1K токенов (in/out) в долларах. Значения — ЗАГЛУШКИ для примера:
-    // реальные цены нужно взять из актуального прайса провайдера.
-    // glm-5.3-flash — бесплатная/локальная модель, стоимость всегда 0.
-    // ВАЖНО: цена именно за 1000 токенов, формула делит токены на 1000.
-    private static final double FLASH_IN_PER_1K = 0.0;
-    private static final double FLASH_OUT_PER_1K = 0.0;
-    private static final double GLM_IN_PER_1K = 0.0005;
-    private static final double GLM_OUT_PER_1K = 0.0015;
+    // Цвета моделей в консоли (индексы совпадают с MODELS): имя модели
+    // окрашено одинаково во всех секциях вывода, модели легче различать.
+    private static final String[] MODEL_COLORS = {Paint.CYAN, Paint.YELLOW, Paint.MAGENTA};
+
+    // Цены за 1K токенов (in/out) в долларах — РЕАЛЬНЫЕ, из актуальных прайсов (дата: 04.09.2026).
+    // ВАЖНО: цена именно за 1000 токенов, формула computeCost делит токены на 1000.
+    //
+    // Авто-получение цен через API НЕ добавлено: проверено 04.09.2026, что GET
+    // https://opencode.ai/zen/v1/models отдаёт для каждой модели только поля
+    // {id, object, created, owned_by} — полей pricing/input_cost/prompt_price нет.
+    //
+    // glm-5.3-flash: в публичном прайсе провайдера OpenCode Zen модели НЕТ
+    // (проверено 04.09.2026: https://opencode.ai/docs/zen/#pricing и GET /v1/models) —
+    // взята цена первоисточника Z.AI (https://docs.z.ai/guides/overview/pricing, 04.09.2026):
+    // $0.075 in / $0.25 out за 1M токенов — акция −50% до 24:00 09.09.2026 (UTC+8);
+    // с 10.09.2026 откат к прайсу $0.15 in / $0.50 out за 1M.
+    // Перевод в цену за 1K: 0.075/1000 = 0.000075; 0.25/1000 = 0.00025.
+    private static final double FLASH_IN_PER_1K = 0.000075;
+    private static final double FLASH_OUT_PER_1K = 0.00025;
+    // glm-5.2: прайс провайдера OpenCode Zen (https://opencode.ai/docs/zen/#pricing,
+    // обновлён 04.09.2026): $1.40 in / $4.40 out за 1M токенов
+    // (совпадает с прайсом первоисточника Z.AI: $1.4/$4.4).
+    // Перевод в цену за 1K: 1.40/1000 = 0.0014; 4.40/1000 = 0.0044.
+    private static final double GLM_IN_PER_1K = 0.0014;
+    private static final double GLM_OUT_PER_1K = 0.0044;
+    // qwen3.8-max: в публичном прайсе провайдера OpenCode Zen модели НЕТ (там только
+    // qwen3.7-max: $2.50/$7.50 за 1M) — взята цена первоисточника Alibaba Cloud Model
+    // Studio, регион International (https://www.alibabacloud.com/help/en/model-studio/qwen3-8-max,
+    // 04.09.2026): $2.00 in / $6.00 out за 1M токенов.
+    // Перевод в цену за 1K: 2.00/1000 = 0.002; 6.00/1000 = 0.006.
     private static final double QWEN_IN_PER_1K = 0.002;
-    private static final double QWEN_OUT_PER_1K = 0.008;
+    private static final double QWEN_OUT_PER_1K = 0.006;
 
     private static final Map<String, double[]> PRICES_PER_1K = Map.of(
             "glm-5.3-flash", new double[]{FLASH_IN_PER_1K, FLASH_OUT_PER_1K},
@@ -130,9 +152,16 @@ public class Day5 {
             return;
         }
 
-        System.out.println("=== День 5. Версии моделей: одна задача — три модели ===");
-        System.out.println("Модели: " + String.join(", ", MODELS)
-                + " (метки: " + String.join(", ", MODEL_LABELS) + ")");
+        printBanner();
+        StringBuilder legend = new StringBuilder("Модели: ");
+        for (int i = 0; i < MODELS.length; i++) {
+            if (i > 0) {
+                legend.append(Paint.paint(Paint.DIM, "  •  "));
+            }
+            legend.append(Paint.paint(Paint.BOLD + MODEL_COLORS[i], MODELS[i]))
+                    .append(Paint.paint(Paint.DIM, " (" + MODEL_LABELS[i] + ")"));
+        }
+        System.out.println(legend);
         System.out.println("Задача:\n" + COMMON_TASK);
         System.out.println();
 
@@ -148,7 +177,8 @@ public class Day5 {
             String label = MODEL_LABELS[i];
 
             System.out.println("------------------------------------------------");
-            System.out.printf(Locale.ROOT, "МОДЕЛЬ: %s (%s)%n", model, label);
+            System.out.printf(Locale.ROOT, "МОДЕЛЬ: %s (%s)%n",
+                    Paint.paint(Paint.BOLD + modelColor(model), model), label);
             System.out.println("------------------------------------------------");
 
             String loaderLabel = "Ждём ответ модели (" + model + ")";
@@ -180,7 +210,49 @@ public class Day5 {
         printSummaryTable(statsList);
         printAutomaticAnalysis(statsList);
         printConclusion(statsList);
-        System.out.println("=== Готово. ===");
+        System.out.println(Paint.paint(Paint.BOLD + Paint.GREEN, "=== Готово. ==="));
+    }
+
+    // ---------- Помощники раскраски ----------
+
+    // Цвет конкретной модели: единый по всем секциям вывода.
+    private static String modelColor(String model) {
+        for (int i = 0; i < MODELS.length; i++) {
+            if (MODELS[i].equals(model)) {
+                return MODEL_COLORS[i];
+            }
+        }
+        return "";
+    }
+
+    // Цвет стоимости: зелёный — дёшево или бесплатно, жёлтый — средне, красный — дорого.
+    private static String costColor(double cost) {
+        return cost == 0.0 ? Paint.GREEN : cost >= 0.005 ? Paint.RED : Paint.YELLOW;
+    }
+
+    // Цвет оценки: зелёный — хорошо, жёлтый — средне, красный — плохо.
+    private static String scoreColor(int score) {
+        return score >= 4 ? Paint.GREEN : score >= 3 ? Paint.YELLOW : Paint.RED;
+    }
+
+    // Оценка «звёздами»: зачтённые пункты — закрашенные звёзды, проваленные — пустые.
+    private static String scoreStars(int score) {
+        return "★".repeat(Math.max(0, score)) + "☆".repeat(Math.max(0, 5 - score));
+    }
+
+    // Время в человекочитаемом виде: секунды с одним знаком после запятой.
+    private static String formatMillis(long elapsedMillis) {
+        return String.format(Locale.ROOT, "%.1f с", elapsedMillis / 1000.0);
+    }
+
+    // Цветная шапка дня: рамка из псевдографики вместо однострочного заголовка.
+    private static void printBanner() {
+        System.out.println();
+        System.out.println(Paint.paint(Paint.BOLD + Paint.CYAN, "╔" + "═".repeat(60) + "╗"));
+        System.out.println(Paint.paint(Paint.BOLD + Paint.CYAN, "║")
+                + Paint.center(Paint.BOLD, "ДЕНЬ 5 · ВЕРСИИ МОДЕЛЕЙ: ОДНА ЗАДАЧА — ТРИ МОДЕЛИ", 60)
+                + Paint.paint(Paint.BOLD + Paint.CYAN, "║"));
+        System.out.println(Paint.paint(Paint.BOLD + Paint.CYAN, "╚" + "═".repeat(60) + "╝"));
     }
 
     // ---------- Разбор ответа модели ----------
@@ -444,55 +516,124 @@ public class Day5 {
 
     // Метрики одной модели, включая разделение reasoning-токенов.
     private static void printModelMetrics(ModelStats stats) {
-        System.out.printf(Locale.ROOT, "  Время ответа: %d мс%n", stats.elapsedMillis);
+        System.out.printf(Locale.ROOT, "  Время ответа: %s%n",
+                Paint.paint(Paint.BLUE, formatMillis(stats.elapsedMillis)));
         System.out.printf(Locale.ROOT, "  Токены: prompt=%d, completion=%d, reasoning=%d, total=%d%n",
                 stats.promptTokens, stats.completionTokens, stats.reasoningTokens, stats.totalTokens);
-        System.out.printf(Locale.ROOT, "  Стоимость: $%.6f%n", stats.cost);
-        System.out.printf(Locale.ROOT, "  Баллы качества: %d из 5%n", stats.qualityScore);
+        System.out.printf(Locale.ROOT, "  Стоимость: %s%n",
+                Paint.paint(costColor(stats.cost), String.format(Locale.ROOT, "$%.6f", stats.cost)));
+        System.out.printf(Locale.ROOT, "  Баллы качества: %s %s%n",
+                Paint.paint(scoreColor(stats.qualityScore),
+                        stats.qualityScore + " из 5"),
+                Paint.paint(scoreColor(stats.qualityScore), scoreStars(stats.qualityScore)));
 
         List<String> failed = failedItems(stats.parsed);
         if (failed.isEmpty()) {
-            System.out.println("  Проваленные пункты: нет — все критерии зачтены");
+            System.out.println("  " + Paint.paint(Paint.GREEN, "Проваленные пункты: нет — все критерии зачтены"));
         } else {
-            System.out.println("  Проваленные пункты: " + String.join(", ", failed));
+            System.out.println("  " + Paint.paint(Paint.RED, "Проваленные пункты: " + String.join(", ", failed)));
         }
-        System.out.printf(Locale.ROOT, "  Нарушений формата: %d%n%n", stats.parsed.formatViolations());
+        int violations = stats.parsed.formatViolations();
+        System.out.printf(Locale.ROOT, "  Нарушений формата: %s%n%n",
+                Paint.paint(violations == 0 ? Paint.GREEN : Paint.RED, String.valueOf(violations)));
     }
 
     // ---------- Сводная таблица ----------
 
     private static void printSummaryTable(List<ModelStats> statsList) {
-        System.out.println("=============================================================================================== ИТОГОВАЯ ТАБЛИЦА ===============================================================================================");
-        System.out.printf(Locale.ROOT,
-                "%-13s | %-8s | %-10s | %-11s | %-15s | %-15s | %-10s | %-8s | %-22s | %-13s | %-52s%n",
-                "Модель", "Сила", "Время(мс)", "Токены(in)",
-                "completion", "reasoning", "Стоимость", "Баллы", "Проваленные пункты",
-                "Наруш.формата", "Особенности модели");
-        System.out.println(
-                "--------------+---------+------------+-------------+-----------------+-----------------+-----------+--------+------------------------+--------------+------------------------------------------------------");
-        for (ModelStats s : statsList) {
-            List<String> failed = failedItems(s.parsed);
-            String failedText = failed.isEmpty() ? "—" : String.join(",", failed);
-            if (failedText.length() > 22) {
-                failedText = failedText.substring(0, 19) + "...";
-            }
-            System.out.printf(Locale.ROOT,
-                    "%-13s | %-8s | %-10d | %-11d | %-15d | %-15d | %-10s | %-8d | %-22s | %-13d | %-52s%n",
-                    s.model, s.label, s.elapsedMillis, s.promptTokens,
-                    s.completionTokens, s.reasoningTokens,
-                    String.format(Locale.ROOT, "$%.6f", s.cost), s.qualityScore,
-                    failedText, s.parsed.formatViolations(), qualitativeTrait(s));
-        }
-        System.out.println(
-                "================================================================================================================================================================================================================");
-        System.out.println("Пояснение: для reasoning-моделей (qwen3.8-max) высокая стоимость");
-        System.out.println("определяется скрытыми reasoning-токенами, а не объёмом полезного ответа.");
         System.out.println();
-        // Качественные различия — расшифровка колонки «Особенности модели» по каждой модели.
+        System.out.println(Paint.paint(Paint.BOLD + Paint.CYAN, "═".repeat(72)));
+        System.out.println(Paint.center(Paint.BOLD, "ИТОГОВАЯ ТАБЛИЦА: одна задача — три модели", 72));
+        System.out.println(Paint.paint(Paint.BOLD + Paint.CYAN, "═".repeat(72)));
+
+        // --- Компактные метрики с цветовой кодировкой значений ---
+        System.out.println(Paint.paint(Paint.DIM, String.format(Locale.ROOT,
+                "  %-13s %-8s %-7s %-19s %-10s %s",
+                "Модель", "Сила", "Время", "Токены in/out/reas.", "Стоимость", "Баллы")));
+        for (ModelStats s : statsList) {
+            String color = modelColor(s.model);
+            System.out.printf(Locale.ROOT, "  %s %s %s %s %s %s%n",
+                    Paint.cell(Paint.BOLD + color, s.model, 13),
+                    Paint.cell(color, s.label, 8),
+                    Paint.cell(Paint.BLUE, formatMillis(s.elapsedMillis), 7),
+                    Paint.cell(Paint.DIM, s.promptTokens + "/" + s.completionTokens
+                            + "/" + s.reasoningTokens, 19),
+                    Paint.cell(costColor(s.cost), String.format(Locale.ROOT, "$%.6f", s.cost), 10),
+                    Paint.paint(scoreColor(s.qualityScore), scoreStars(s.qualityScore)));
+        }
+
+        // --- Матрица ответов: сразу видно, кто какой пункт завалил ---
+        // Главная наглядность: по строкам критерии, по колонкам модели.
+        // Столбец «Формат» показывает число нарушений формата (0 = всё хорошо).
+        System.out.println();
+        System.out.println(Paint.paint(Paint.BOLD, "Матрица ответов")
+                + Paint.paint(Paint.DIM, "  (✓ — зачтено, ✗ — провалено)"));
+
+        int critWidth = 10;
+        int modelWidth = 4;
+        for (ModelStats s : statsList) {
+            modelWidth = Math.max(modelWidth, s.model.length() + 2);
+        }
+
+        StringBuilder top = new StringBuilder("┌").append("─".repeat(critWidth));
+        StringBuilder middle = new StringBuilder("├").append("─".repeat(critWidth));
+        StringBuilder bottom = new StringBuilder("└").append("─".repeat(critWidth));
+        for (int i = 0; i < statsList.size(); i++) {
+            top.append("┬").append("─".repeat(modelWidth));
+            middle.append("┼").append("─".repeat(modelWidth));
+            bottom.append("┴").append("─".repeat(modelWidth));
+        }
+        top.append("┐");
+        middle.append("┤");
+        bottom.append("┘");
+
+        StringBuilder header = new StringBuilder("│").append(Paint.cell(Paint.DIM, "Критерий", critWidth));
+        for (ModelStats s : statsList) {
+            header.append("│").append(Paint.center(Paint.BOLD + modelColor(s.model), s.model, modelWidth));
+        }
+        header.append("│");
+
+        System.out.println(top);
+        System.out.println(header);
+        System.out.println(middle);
+
+        String[] criteria = {"ЛОГИКА", "ФАКТ-A", "ФАКТ-B", "ФАКТ-C", "ФАКТ-D", "УГОЛ", "JAVA", "КОД"};
+        for (int c = 0; c < criteria.length; c++) {
+            StringBuilder row = new StringBuilder("│").append(Paint.cell("", criteria[c], critWidth));
+            for (ModelStats s : statsList) {
+                boolean ok = criterionOk(s.parsed, c);
+                row.append("│").append(Paint.center(ok ? Paint.GREEN : Paint.RED,
+                        ok ? "✓" : "✗", modelWidth));
+            }
+            row.append("│");
+            System.out.println(row);
+        }
+        StringBuilder formatRow = new StringBuilder("│").append(Paint.cell(Paint.DIM, "Формат", critWidth));
+        for (ModelStats s : statsList) {
+            int violations = s.parsed.formatViolations();
+            formatRow.append("│").append(Paint.center(violations == 0 ? Paint.GREEN : Paint.RED,
+                    violations == 0 ? "✓" : String.valueOf(violations), modelWidth));
+        }
+        formatRow.append("│");
+        System.out.println(formatRow);
+        System.out.println(bottom);
+
+        System.out.println(Paint.paint(Paint.DIM,
+                "Критерии: ЛОГИКА — задача про братьев и сестёр; ФАКТ-A/B/C/D — факт-ловушки;"));
+        System.out.println(Paint.paint(Paint.DIM,
+                "УГОЛ — часы 15:15; JAVA — 0.1+0.2==0.3; КОД — twoSum за O(n)."));
+        System.out.println(Paint.paint(Paint.DIM,
+                "Пояснение: для reasoning-моделей (qwen3.8-max) высокая стоимость"));
+        System.out.println(Paint.paint(Paint.DIM,
+                "определяется скрытыми reasoning-токенами, а не объёмом полезного ответа."));
+        System.out.println();
+
+        // Качественные различия — расшифровка метрик по каждой модели.
         System.out.println("Представление различий между моделями (по фактическим результатам):");
         for (ModelStats s : statsList) {
             System.out.printf(Locale.ROOT, "  • %s (%s): особенности: %s%n",
-                    s.model, s.label, qualitativeTrait(s));
+                    Paint.paint(Paint.BOLD + modelColor(s.model), s.model),
+                    s.label, qualitativeTrait(s));
             System.out.printf(Locale.ROOT, "    время=%d мс; токены in/out/reasoning=%d/%d/%d; стоимость=$%.6f; баллы=%d из 5%n",
                     s.elapsedMillis, s.promptTokens, s.completionTokens,
                     s.reasoningTokens, s.cost, s.qualityScore);
@@ -500,28 +641,85 @@ public class Day5 {
         System.out.println();
     }
 
+    // Результат одного критерия по номеру — для матрицы ответов.
+    private static boolean criterionOk(ParsedAnswer parsed, int criterionIndex) {
+        return switch (criterionIndex) {
+            case 0 -> parsed.logicOk();
+            case 1 -> parsed.factAOk();
+            case 2 -> parsed.factBOk();
+            case 3 -> parsed.factCOk();
+            case 4 -> parsed.factDOk();
+            case 5 -> parsed.angleOk();
+            case 6 -> parsed.javaOk();
+            case 7 -> parsed.codeOk();
+            default -> false;
+        };
+    }
+
     // ---------- Автоматический анализ по фактическим метрикам ----------
 
     private static void printAutomaticAnalysis(List<ModelStats> statsList) {
-        System.out.println("==================== АВТОМАТИЧЕСКИЙ АНАЛИЗ ====================");
+        System.out.println(Paint.paint(Paint.BOLD + Paint.MAGENTA,
+                "════════════════════ АВТОМАТИЧЕСКИЙ АНАЛИЗ ════════════════════"));
 
         String[] labels = statsList.stream().map(s -> s.model).toArray(String[]::new);
 
         printMetricWinner("Качество (баллы 0–5)",
-                statsList.stream().mapToDouble(s -> s.qualityScore).toArray(), labels, "%.0f");
+                statsList.stream().mapToDouble(s -> s.qualityScore).toArray(), labels);
         printMetricWinner("Скорость (меньше время — лучше)",
-                statsList.stream().mapToDouble(s -> -s.elapsedMillis).toArray(), labels, "%.0f мс");
+                statsList.stream().mapToDouble(s -> -s.elapsedMillis).toArray(), labels);
         printMetricWinner("Дешевизна (меньше стоимость — лучше)",
-                statsList.stream().mapToDouble(s -> -s.cost).toArray(), labels, "$%.6f");
+                statsList.stream().mapToDouble(s -> -s.cost).toArray(), labels);
         printMetricWinner("Экономность (меньше total токенов — лучше)",
-                statsList.stream().mapToDouble(s -> -s.totalTokens).toArray(), labels, "%.0f");
+                statsList.stream().mapToDouble(s -> -s.totalTokens).toArray(), labels);
+
+        // ASCII-бары: длина бара — доля модели от максимума по всем моделям.
+        // «Меньше — лучше» у всех метрик, поэтому самый короткий бар помечен как лучший.
+        System.out.println();
+        System.out.println(Paint.paint(Paint.BOLD, "Наглядное сравнение (бар = доля от худшего значения):"));
+        printBarChart("время ответа", statsList, s -> s.elapsedMillis / 1000.0, "%.1f с");
+        printBarChart("стоимость запроса", statsList, s -> s.cost, "$%.6f");
+        printBarChart("всего токенов", statsList, s -> s.totalTokens, "%.0f");
 
         System.out.println();
     }
 
+    // Длина ASCII-бара в символах.
+    private static final int BAR_LENGTH = 24;
+
+    // Горизонтальный ASCII-бар по каждой модели: цвет бара совпадает с цветом модели.
+    private static void printBarChart(String title, List<ModelStats> statsList,
+                                      java.util.function.ToDoubleFunction<ModelStats> metric,
+                                      String valueFormat) {
+        double max = 0;
+        double best = Double.MAX_VALUE;
+        for (ModelStats s : statsList) {
+            double value = metric.applyAsDouble(s);
+            max = Math.max(max, value);
+            best = Math.min(best, value);
+        }
+        System.out.println();
+        System.out.println("  " + Paint.paint(Paint.BOLD, title));
+        for (ModelStats s : statsList) {
+            double value = metric.applyAsDouble(s);
+            int filled = max <= 0 ? BAR_LENGTH : (int) Math.round(value / max * BAR_LENGTH);
+            String bar = Paint.paint(modelColor(s.model),
+                    "█".repeat(filled) + "░".repeat(BAR_LENGTH - filled));
+            StringBuilder line = new StringBuilder();
+            line.append(String.format(Locale.ROOT, "    %s %s %s",
+                    Paint.cell(Paint.BOLD + modelColor(s.model), s.model, 13),
+                    bar,
+                    Paint.paint(Paint.DIM, String.format(Locale.ROOT, valueFormat, value))));
+            if (Math.abs(value - best) < 1e-9) {
+                line.append(" ").append(Paint.paint(Paint.GREEN + Paint.BOLD, "← лучшая"));
+            }
+            System.out.println(line);
+        }
+    }
+
     // Ищет максимум метрики; при совпадении значений прямо сообщает об отсутствии различий.
     private static void printMetricWinner(String metricName, double[] values,
-                                          String[] labels, String valueFormat) {
+                                          String[] labels) {
         double max = Double.NEGATIVE_INFINITY;
         for (double value : values) {
             if (value > max) {
@@ -536,19 +734,25 @@ public class Day5 {
             }
         }
 
-        String maxValue = String.format(Locale.ROOT, valueFormat, max);
         if (winners.size() == 1) {
-            System.out.printf(Locale.ROOT, "  • %s: лучшая — %s%n", metricName, winners.get(0));
+            System.out.printf(Locale.ROOT, "  %s %s: лучшая — %s%n",
+                    Paint.paint(Paint.YELLOW, "◆"),
+                    metricName, Paint.paint(Paint.GREEN + Paint.BOLD, winners.get(0)));
         } else {
-            System.out.printf(Locale.ROOT, "  • %s: различия по этой метрике не обнаружены — %s%n",
-                    metricName, String.join(", ", winners));
+            System.out.printf(Locale.ROOT, "  %s %s: различия по этой метрике не обнаружены — %s%n",
+                    Paint.paint(Paint.DIM, "•"),
+                    metricName, Paint.paint(Paint.YELLOW, String.join(", ", winners)));
         }
     }
 
     // ---------- Текстовый вывод о различиях моделей и ссылки ----------
 
     private static void printConclusion(List<ModelStats> statsList) {
-        System.out.println("=========== ВЫВОД ===========");
+        System.out.println();
+        System.out.println(Paint.paint(Paint.BOLD + Paint.YELLOW, "╔" + "═".repeat(50) + "╗"));
+        System.out.println(Paint.paint(Paint.BOLD + Paint.YELLOW, "║")
+                + Paint.center(Paint.BOLD, "В Ы В О Д", 50) + Paint.paint(Paint.BOLD + Paint.YELLOW, "║"));
+        System.out.println(Paint.paint(Paint.BOLD + Paint.YELLOW, "╚" + "═".repeat(50) + "╝"));
         if (statsList.isEmpty()) {
             System.out.println("Все запросы завершились ошибкой — сравнение невозможно.");
             return;
@@ -558,13 +762,23 @@ public class Day5 {
         ModelStats fastest = bestBy(statsList, s -> -s.elapsedMillis);
         ModelStats cheapest = bestBy(statsList, s -> -s.cost);
 
-        System.out.printf(Locale.ROOT,
-                "  • Лучшая по качеству: %s (%d из 5)%n",
-                bestQuality.model, bestQuality.qualityScore);
-        System.out.printf(Locale.ROOT,
-                "  • Самая быстрая: %s (%d мс)%n", fastest.model, fastest.elapsedMillis);
-        System.out.printf(Locale.ROOT,
-                "  • Самая дешёвая: %s ($%.6f)%n", cheapest.model, cheapest.cost);
+        // «Медали» с цветными звёздами: победители подсвечены цветом своей модели.
+        System.out.printf(Locale.ROOT, "  %s Лучшая по качеству: %s (%d из 5)%n",
+                Paint.paint(Paint.YELLOW + Paint.BOLD, "★"),
+                Paint.paint(Paint.BOLD + modelColor(bestQuality.model), bestQuality.model),
+                bestQuality.qualityScore);
+        System.out.printf(Locale.ROOT, "  %s Самая быстрая: %s (%s)%n",
+                Paint.paint(Paint.CYAN + Paint.BOLD, "★"),
+                Paint.paint(Paint.BOLD + modelColor(fastest.model), fastest.model),
+                formatMillis(fastest.elapsedMillis));
+        System.out.printf(Locale.ROOT, "  %s Самая дешёвая: %s ($%.6f)%n",
+                Paint.paint(Paint.GREEN + Paint.BOLD, "★"),
+                Paint.paint(Paint.BOLD + modelColor(cheapest.model), cheapest.model),
+                cheapest.cost);
+
+        // Необычное: ASCII-трофей обладателю первого места по качеству.
+        System.out.println();
+        printTrophy(bestQuality);
 
         System.out.println();
         System.out.println("Различия между моделями на неочевидных задачах:");
@@ -576,10 +790,43 @@ public class Day5 {
         System.out.println("  • Сильная модель решает и редкие пункты, и код с O(n), но тратит");
         System.out.println("    больше reasoning-токенов, времени и денег.");
         System.out.println();
-        System.out.println("Полезные ссылки для самостоятельного сравнения моделей:");
-        System.out.println("  https://huggingface.co/models");
-        System.out.println("  https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard");
+        System.out.println("Актуальность цен (стоимость не синтетическая): 04.09.2026.");
+        System.out.println("  • glm-5.2: прайс провайдера OpenCode Zen — "
+                + Paint.paint(Paint.BLUE + Paint.UNDERLINE, "https://opencode.ai/docs/zen/#pricing"));
+        System.out.println("  • glm-5.3-flash: в прайсе Zen отсутствует, цена Z.AI (действует до 09.09.2026) —");
+        System.out.println("    " + Paint.paint(Paint.BLUE + Paint.UNDERLINE, "https://docs.z.ai/guides/overview/pricing"));
+        System.out.println("  • qwen3.8-max: в прайсе Zen отсутствует, цена Alibaba Cloud Model Studio —");
+        System.out.println("    " + Paint.paint(Paint.BLUE + Paint.UNDERLINE, "https://www.alibabacloud.com/help/en/model-studio/qwen3-8-max"));
         System.out.println();
+        System.out.println("Полезные ссылки для самостоятельного сравнения моделей:");
+        System.out.println("  " + Paint.paint(Paint.BLUE + Paint.UNDERLINE, "https://huggingface.co/models"));
+        System.out.println("  " + Paint.paint(Paint.BLUE + Paint.UNDERLINE, "https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard"));
+        System.out.println();
+    }
+
+    // ASCII-трофей победителю по качеству — вместо сухой строки «лучшая модель».
+    private static void printTrophy(ModelStats winner) {
+        String[] trophy = {
+                "          ___________",
+                "         '._==_==_.'",
+                "         .-\\:      /-.",
+                "        | (|:.     |) |",
+                "         '-|:.     |-'",
+                "           \\::.    /",
+                "            '::. .'",
+                "              ) (",
+                "            _.' '._",
+                "           '-------'"
+        };
+        for (int i = 0; i < trophy.length; i++) {
+            String extra = switch (i) {
+                case 1 -> "    " + Paint.paint(Paint.BOLD + Paint.YELLOW, "ТРОФЕЙ ДНЯ");
+                case 3 -> "    " + Paint.paint(Paint.BOLD + Paint.GREEN,
+                        winner.model + " — лучшее качество (" + winner.qualityScore + "/5)");
+                default -> "";
+            };
+            System.out.println(Paint.paint(Paint.YELLOW, trophy[i]) + extra);
+        }
     }
 
     // Модель с максимальным значением метрики.
@@ -728,6 +975,47 @@ public class Day5 {
                 throw new IllegalStateException("Не задана переменная окружения LLM_API_URL");
             }
             return new Config(apiKey, apiUrl);
+        }
+    }
+
+    // ---------- ANSI-раскраска консоли ----------
+
+    // Обёртка над ANSI-кодами: делает вывод разноцветным и при этом безопасным.
+    // Если задана переменная окружения NO_COLOR (например, при записи в файл),
+    // все коды превращаются в пустые строки и вывод остаётся обычным текстом.
+    private static final class Paint {
+        static final boolean ENABLED = System.getenv("NO_COLOR") == null;
+        static final String RESET = ENABLED ? "\u001B[0m" : "";
+        static final String BOLD = ENABLED ? "\u001B[1m" : "";
+        static final String DIM = ENABLED ? "\u001B[2m" : "";
+        static final String UNDERLINE = ENABLED ? "\u001B[4m" : "";
+        static final String RED = ENABLED ? "\u001B[31m" : "";
+        static final String GREEN = ENABLED ? "\u001B[32m" : "";
+        static final String YELLOW = ENABLED ? "\u001B[33m" : "";
+        static final String BLUE = ENABLED ? "\u001B[34m" : "";
+        static final String MAGENTA = ENABLED ? "\u001B[35m" : "";
+        static final String CYAN = ENABLED ? "\u001B[36m" : "";
+
+        private Paint() {
+        }
+
+        // Окрашивает текст: цвет + текст + сброс. Выравнивание не страдает,
+        // потому что внутри строки нет паддинга.
+        static String paint(String color, String text) {
+            return color + text + RESET;
+        }
+
+        // Ячейка таблицы: сначала паддинг по «чистому» тексту, потом окраска.
+        // ANSI-коды не попадают внутрь форматирования и не ломают колонки.
+        static String cell(String color, String text, int width) {
+            return paint(color, String.format(Locale.ROOT, "%-" + width + "s", text));
+        }
+
+        // Ячейка по центру фиксированной ширины (для ✓/✗ в матрице ответов).
+        static String center(String color, String text, int width) {
+            int left = Math.max(0, (width - text.length()) / 2);
+            int right = Math.max(0, width - text.length() - left);
+            return paint(color, " ".repeat(left) + text + " ".repeat(right));
         }
     }
 
